@@ -4,7 +4,6 @@
 
 import sys
 import os
-import gc
 import argparse
 import codecs
 from collections import Counter
@@ -52,7 +51,8 @@ def run(input, output):
     # define tables
     # key and value name tuples for each table
     drugs_key_names = ('drug_id',)
-    drugs_value_names = ['drug_name', 'restrictions', 'drug_description', 'pathways', 'general_references', ]
+    drugs_value_names = ['drug_name', 'groups', 'drug_description', 'pathways', 'general_references',
+                         'type', 'formula', 'inchi', 'smiles', 'chembl']
 
     drug_target_key_names = ('drug_id', 'target_id', )
     drug_target_value_names = ['drug_target_references', ]
@@ -94,18 +94,72 @@ def run(input, output):
         drugs_record = {}
         drug_id = [i for i in drug.xpath('db:drugbank-id', namespaces=ns) if i.attrib.get('primary') == 'true'][0].text
         drugs_record['drug_name'] = drug.xpath('db:name', namespaces=ns)[0].text
+        # Basic Property for Drugs
+        # description
         drug_description = drug.xpath('db:description', namespaces=ns)[0].text
         # deal with drugs that have no description or stray newlines, linefeeds, and tabs
-        drugs_record['drug_description'] = drug_description.strip().replace('\n','').replace('\r', '')\
+        drugs_record['drug_description'] = drug_description.strip().replace('\n', '').replace('\r', '')\
             .replace('\t', ' ') if drug_description else ''
-        # restrictions
-        drugs_record['restrictions'] = ','.join([g.text for g in drug.xpath('db:groups/db:group', namespaces=ns)])
+        # restrictions/groups
+        drugs_record['groups'] = ','.join([g.text for g in drug.xpath('db:groups/db:group', namespaces=ns)])
         # pathways
-        drugs_record['pathways'] = ','.join([p.text for p in drug.xpath('db:pathways/db:pathway/db:name', namespaces=ns)])
+        pathway = drug.xpath('db:pathways/db:pathway/db:name', namespaces=ns)
+        drugs_record['pathways'] = ','.join([p.text for p in pathway]) if pathway else ''
         # general_references
         general_references = drug.xpath('db:general-references', namespaces=ns)[0].text
         drugs_record['general_references'] = general_references.strip().replace('\n', '').replace('\r', '')\
             .replace('\t', ' ') if general_references else ''
+        # drug type
+        drugs_record['type'] = drug.attrib["type"]
+        # Calculated properties:
+        # Formula, InChi, \InChiKey, SMILES, \MW
+        drugs_record["formula"] = ''
+        drugs_record["inchi"] = ''
+        drugs_record["smiles"] = ''
+        # drugs_record["molecular_weight"] = ''
+        # drugs_record["inchikey"] = ''
+        if drug.xpath("db:calculated-properties", namespaces=ns):
+            flag = ""
+            for property in drug.xpath("db:calculated-properties/*/*/text()", namespaces=ns):
+                if flag == "formula":
+                    drugs_record["formula"] = property
+                    flag = ""
+                elif property == "Molecular Formula":
+                    flag = "formula"
+                elif flag == "smiles":
+                    drugs_record["smiles"] = property
+                    flag = ""
+                elif property == "SMILES":
+                    flag = "smiles"
+                elif flag == "inchi":
+                    drugs_record["inchi"] = property
+                    flag = ""
+                elif property == "InChI":
+                    flag = "inchi"
+        # ChEmBL ID
+        external_links = drug.xpath('db:external-identifiers/*/*/text()', namespaces=ns)
+        drugs_record["chembl"] = ''
+        flag = ""
+        if external_links:
+            for link in external_links:
+                if link == "ChEMBL":
+                    flag = "chembl"
+                elif flag == "chembl":
+                    drugs_record["chembl"] = link
+                    flag = ""
+        # ADMET properties
+        # metabolism
+        drugs_record['metabolism'] = drug.xpath("db:metabolism/text()", namespaces=ns)[0] \
+            if drug.xpath("db:metabolism/text()", namespaces=ns) else ''
+        # clearance
+        drugs_record['clearance'] = drug.xpath('db:clearance/text()', namespaces=ns)[0] \
+            if drug.xpath('db:clearance/text()', namespaces=ns) else ''
+        # half-life
+        drugs_record['half_life'] = '. '.join(drug.xpath('db:half-life/text()', namespaces=ns)) \
+            if drug.xpath('db:half-life/text()', namespaces=ns) else ''
+        # absorption
+        drugs_record['absorption'] = '. '.join(drug.xpath('db:absorption/text()', namespaces=ns)) \
+            if drug.xpath('db:half-life/text()', namespaces=ns) else ''
         # add this record to the table
         drugs_records[(drug_id,)] = drugs_record
         record_counts['drugs'] += 1
@@ -133,7 +187,7 @@ def run(input, output):
             # drug_target_references
             drug_target_references = target.xpath('db:references', namespaces=ns)[0].text
             drug_target_record['drug_target_references'] = drug_target_references.strip().replace('\n', '')\
-                .replace('\r', '').replace('\t',' ') if drug_target_references else ''
+                .replace('\r', '').replace('\t', ' ') if drug_target_references else ''
             drug_target_records[(drug_id, target_id,)] = drug_target_record
             record_counts['drug_target'] += 1
 
@@ -213,8 +267,6 @@ def run(input, output):
                 file.write(u'{keys}{tab}{values}\n'.format(keys=k, tab=tab, values=v))
 
     print('Got:\n{}'.format('\n'.join(['\t{}: {} records'.format(c, record_counts[c]) for c in record_counts.keys()])))
-    del(tree)
-    gc.collect()
     print('Done.')
     sys.exit()
 

@@ -38,3 +38,7 @@ optional arguments:
                         output directory for write relation tables, default is
                         input directory
 ```
+## Problem
+This script require large memory (~8G in my laptop). 
+
+Unfortunately, this script need to be killed after running. It can't quit normally...
